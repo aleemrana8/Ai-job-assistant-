@@ -18,6 +18,17 @@
 
     {
       "parameters": {
+        "jsCode": "// === USER PROFILE / CV ===\n// Edit USER_CV below with your real CV text. The AI agent uses it to\n// match skills, score relevance, and identify gaps. Keep it concise (<2000 chars).\nconst USER_CV = `\nName: Your Name\nTarget Roles: Project Manager, Product Manager, Scrum Master, AI Project Manager, Program Manager\nExperience: 0-3 years (entry to mid level)\nSkills: Agile, Scrum, Jira, Confluence, Trello, Asana, Notion, stakeholder communication, sprint planning, roadmaps, requirements gathering, basic SQL, Google Workspace, MS Office, AI tools (ChatGPT, n8n, Zapier).\nDomains: SaaS, AI, automation, fintech (open).\nCertifications (optional): CSM in progress, Google PM Certificate.\nLocation: Remote / Worldwide.\n`.trim();\n\nreturn [{ json: { user_cv: USER_CV } }];\n"
+      },
+      "id": "user-cv",
+      "name": "User CV (edit me)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [100, 600]
+    },
+
+    {
+      "parameters": {
         "url": "https://remotive.com/api/remote-jobs?search=project+manager",
         "options": { "timeout": 15000 }
       },
@@ -156,7 +167,7 @@
 
     {
       "parameters": {
-        "jsCode": "// === BATCH all fresh jobs into ONE item for the AI agent ===\nconst payload = items.map(i => ({\n  id: i.json.id,\n  source: i.json.source,\n  title: i.json.title,\n  company: i.json.company,\n  location: i.json.location,\n  url: i.json.url,\n  summary_raw: i.json.description?.slice(0, 600) || ''\n}));\nreturn [{ json: { jobs: payload, count: payload.length } }];\n"
+        "jsCode": "// === BATCH all fresh jobs + attach USER_CV into ONE item for the AI agent ===\nlet userCv = '';\ntry { userCv = $items('User CV (edit me)')[0].json.user_cv || ''; } catch (e) { userCv = ''; }\n\nconst payload = items.map(i => ({\n  id: i.json.id,\n  source: i.json.source,\n  title: i.json.title,\n  company: i.json.company,\n  location: i.json.location,\n  url: i.json.url,\n  description: (i.json.description || '').slice(0, 800)\n}));\n\nreturn [{ json: { user_cv: userCv, jobs: payload, count: payload.length } }];\n"
       },
       "id": "batch",
       "name": "Batch for AI",
@@ -173,11 +184,11 @@
           "values": [
             {
               "role": "system",
-              "content": "You are an expert AI Job Hunter assistant.\n\nGOAL: Find the best REMOTE Project Management jobs for a candidate with 0–3 years experience.\n\nSTRICT FILTER:\n- Include only REMOTE jobs.\n- Roles allowed: Project Manager, Associate PM, Junior PM, Product Manager, Scrum Master.\n- Exclude: Senior / Director / 5+ years roles, non-remote roles.\n\nFOR EACH JOB, ENRICH:\n- Clean job title\n- Company name\n- Location\n- 1–2 line simple summary\n- Experience level (guess if missing)\n- Direct apply link\n\nSCORE 1–10 based on: entry-level friendliness, clarity of role, remote flexibility.\n\nOUTPUT RULES:\n- Return ONLY a valid JSON array (no prose, no markdown fences).\n- Max 10 items, no duplicates.\n- Schema per item: {\"title\":\"\",\"company\":\"\",\"location\":\"\",\"summary\":\"\",\"experience\":\"\",\"score\":0,\"link\":\"\",\"source\":\"\"}"
+              "content": "You are a fully autonomous AI Job Agent acting as job search engine, recruiter, career coach, data filter, and decision maker.\n\nMISSION: From the provided JOB_LIST and USER_CV, return only the BEST remote opportunities for the user.\n\nTARGET ROLES (only):\n- Project Manager, Product Manager, AI Project Manager, Scrum Master, Program Manager, Associate/Junior PM, APM, Product Owner.\n\nHARD FILTERS — discard a job if ANY apply:\n- Not remote / not remote-friendly.\n- Role unrelated to target roles (developer, designer, sales, support, etc.).\n- Clearly senior (Senior, Sr., Staff, Principal, Lead, Director, Head of, VP, Chief, 5+ years required).\n\nFOR EACH SURVIVING JOB:\n1. Understand the role from title + description.\n2. Compare with USER_CV: skills match, experience level, domain relevance.\n3. Identify strengths and skill gaps.\n\nSCORING (1–10):\n- CV relevance (most important)\n- Entry-level friendliness\n- Clarity of role\n- Remote flexibility\nMeaning: 1–4 poor, 5–7 medium, 8–10 strong.\n\nRANKING:\n- Sort by score desc.\n- Prefer LinkedIn / Indeed sources when present.\n- Prefer recent postings.\n\nDEDUPLICATION:\n- Remove duplicates by same link OR same (title + company).\n\nOUTPUT — STRICT JSON ARRAY ONLY (no prose, no markdown, no code fences). Each item must follow EXACTLY:\n{\n  \"title\": \"\",\n  \"company\": \"\",\n  \"location\": \"\",\n  \"source\": \"\",\n  \"summary\": \"\",\n  \"score\": 0,\n  \"reason\": \"\",\n  \"skills_match\": [],\n  \"skills_missing\": [],\n  \"apply_link\": \"\"\n}\n\nFIELD RULES:\n- summary: max 2 lines, simple human language explaining what the job is.\n- reason: ONE short sentence on WHY this job fits the user.\n- skills_match / skills_missing: short arrays of strings derived from the CV.\n- apply_link: copy the original job link verbatim — never modify or invent URLs.\n\nLIMITS:\n- Return ONLY top 5–10 jobs.\n- If no good fits exist, return [].\n- DO NOT hallucinate jobs, companies, links, or skills.\n- DO NOT include irrelevant roles even to fill the list."
             },
             {
               "role": "user",
-              "content": "=Here is the JSON list of candidate jobs. Pick the top 10 matches and return the JSON array only.\n\n{{ JSON.stringify($json.jobs) }}"
+              "content": "=USER_CV:\n{{ $json.user_cv }}\n\nJOB_LIST (JSON):\n{{ JSON.stringify($json.jobs) }}\n\nReturn ONLY the JSON array per the schema above."
             }
           ]
         },
@@ -196,7 +207,7 @@
 
     {
       "parameters": {
-        "jsCode": "// === PARSE AI OUTPUT into individual rows for the DB ===\nconst raw = items[0]?.json;\nlet arr = [];\n\n// OpenAI node may return content as string or already-parsed object\nconst content = raw?.message?.content ?? raw?.choices?.[0]?.message?.content ?? raw?.content ?? raw;\ntry {\n  arr = typeof content === 'string' ? JSON.parse(content) : (Array.isArray(content) ? content : (content?.jobs || []));\n} catch (e) {\n  // Try to extract a JSON array substring\n  const m = String(content).match(/\\[[\\s\\S]*\\]/);\n  if (m) arr = JSON.parse(m[0]);\n}\n\nconst today = new Date().toISOString().slice(0, 10);\nreturn (arr || []).slice(0, 10).map(j => ({\n  json: {\n    Date: today,\n    Title: j.title || '',\n    Company: j.company || '',\n    Location: j.location || '',\n    Score: j.score ?? '',\n    Link: j.link || j.url || '',\n    Status: 'New',\n    Source: j.source || 'API',\n    Summary: j.summary || '',\n    Experience: j.experience || ''\n  }\n}));\n"
+        "jsCode": "// === PARSE AI OUTPUT into individual rows for the DB ===\nconst raw = items[0]?.json;\nlet arr = [];\n\nconst content = raw?.message?.content ?? raw?.choices?.[0]?.message?.content ?? raw?.content ?? raw;\ntry {\n  arr = typeof content === 'string' ? JSON.parse(content) : (Array.isArray(content) ? content : (content?.jobs || []));\n} catch (e) {\n  const m = String(content).match(/\\[[\\s\\S]*\\]/);\n  if (m) { try { arr = JSON.parse(m[0]); } catch (_) { arr = []; } }\n}\n\nconst today = new Date().toISOString().slice(0, 10);\nreturn (arr || []).slice(0, 10).map(j => ({\n  json: {\n    Date: today,\n    Title: j.title || '',\n    Company: j.company || '',\n    Location: j.location || '',\n    Score: j.score ?? '',\n    Link: j.apply_link || j.link || j.url || '',\n    Status: 'New',\n    Source: j.source || 'API',\n    Summary: j.summary || '',\n    Reason: j.reason || '',\n    SkillsMatch: Array.isArray(j.skills_match) ? j.skills_match.join(', ') : (j.skills_match || ''),\n    SkillsMissing: Array.isArray(j.skills_missing) ? j.skills_missing.join(', ') : (j.skills_missing || '')\n  }\n}));\n"
       },
       "id": "parse-ai",
       "name": "Parse AI -> Rows",
@@ -213,16 +224,18 @@
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
-            "Date":       "={{ $json.Date }}",
-            "Title":      "={{ $json.Title }}",
-            "Company":    "={{ $json.Company }}",
-            "Location":   "={{ $json.Location }}",
-            "Score":      "={{ $json.Score }}",
-            "Link":       "={{ $json.Link }}",
-            "Status":     "={{ $json.Status }}",
-            "Source":     "={{ $json.Source }}",
-            "Summary":    "={{ $json.Summary }}",
-            "Experience": "={{ $json.Experience }}"
+            "Date":          "={{ $json.Date }}",
+            "Title":         "={{ $json.Title }}",
+            "Company":       "={{ $json.Company }}",
+            "Location":      "={{ $json.Location }}",
+            "Score":         "={{ $json.Score }}",
+            "Link":          "={{ $json.Link }}",
+            "Status":        "={{ $json.Status }}",
+            "Source":        "={{ $json.Source }}",
+            "Summary":       "={{ $json.Summary }}",
+            "Reason":        "={{ $json.Reason }}",
+            "SkillsMatch":   "={{ $json.SkillsMatch }}",
+            "SkillsMissing": "={{ $json.SkillsMissing }}"
           }
         },
         "options": {}
@@ -239,7 +252,7 @@
 
     {
       "parameters": {
-        "jsCode": "// === BUILD a single email digest item from all rows ===\nconst rows = items.map(i => i.json);\nconst lines = rows.map((r, idx) => {\n  return `${idx + 1}. ${r.Title} — ${r.Company}\\n   📍 ${r.Location}  ⭐ ${r.Score}/10  (${r.Source})\\n   🧾 ${r.Summary}\\n   🔗 ${r.Link}`;\n}).join('\\n\\n');\n\nconst html = `\n<h2>🚀 Daily Remote PM Jobs (Top Matches)</h2>\n<p>Here are your best opportunities today:</p>\n<ol>\n${rows.map(r => `<li><b>${r.Title}</b> — ${r.Company}<br>📍 ${r.Location} &nbsp; ⭐ ${r.Score}/10 &nbsp; <i>${r.Source}</i><br>${r.Summary}<br><a href=\"${r.Link}\">Apply →</a></li>`).join('')}\n</ol>\n<h3>🔥 Action Plan</h3>\n<ul><li>Apply to top 3 jobs</li><li>Track status in dashboard</li></ul>\n<p><i>Stay consistent.</i></p>\n`;\n\nreturn [{ json: { count: rows.length, text: lines, html } }];\n"
+        "jsCode": "// === BUILD a single email digest item from all rows ===\nconst rows = items.map(i => i.json);\nconst top3 = rows.slice(0, 3);\n\nconst text = [\n  'Top Remote Jobs for You 🚀',\n  '',\n  'Here are your best opportunities today:',\n  '',\n  ...top3.map((r, i) => `${i + 1}. ${r.Title} — ${r.Company}\\n   ${r.Link}`),\n  '',\n  'Full ranked list:',\n  ...rows.map((r, i) => `${i + 1}. [${r.Score}/10] ${r.Title} — ${r.Company} (${r.Source})\\n   📍 ${r.Location}\\n   🧾 ${r.Summary}\\n   💡 ${r.Reason}\\n   ✅ Match: ${r.SkillsMatch}\\n   ⚠️  Gaps: ${r.SkillsMissing}\\n   🔗 ${r.Link}`),\n  '',\n  'Action: apply to the top 3 today and update Status in the dashboard.'\n].join('\\n');\n\nconst html = `\n<h2>🚀 Top Remote Jobs for You</h2>\n<p>Here are your best opportunities today.</p>\n<h3>⚡ Apply first</h3>\n<ol>\n${top3.map(r => `<li><b>${r.Title}</b> — ${r.Company}<br><a href=\"${r.Link}\">Apply →</a></li>`).join('')}\n</ol>\n<h3>📊 Full ranked list</h3>\n<ol>\n${rows.map(r => `<li><b>${r.Title}</b> — ${r.Company}<br>📍 ${r.Location} &nbsp; ⭐ ${r.Score}/10 &nbsp; <i>${r.Source}</i><br><b>Summary:</b> ${r.Summary}<br><b>Why it fits:</b> ${r.Reason}<br><b>✅ Match:</b> ${r.SkillsMatch}<br><b>⚠️ Gaps:</b> ${r.SkillsMissing}<br><a href=\"${r.Link}\">Apply →</a></li>`).join('')}\n</ol>\n<p><i>Stay consistent — apply to the top 3 today.</i></p>\n`;\n\nreturn [{ json: { count: rows.length, text, html } }];\n"
       },
       "id": "digest",
       "name": "Build Email Digest",
@@ -252,7 +265,7 @@
       "parameters": {
         "fromEmail": "your@email.com",
         "toEmail": "your@email.com",
-        "subject": "🚀 Daily Remote PM Jobs (Top Matches)",
+        "subject": "Top Remote Jobs for You 🚀",
         "emailFormat": "html",
         "html": "={{ $json.html }}",
         "text": "={{ $json.text }}",
@@ -272,6 +285,7 @@
   "connections": {
     "Daily Cron 9AM": {
       "main": [[
+        { "node": "User CV (edit me)",        "type": "main", "index": 0 },
         { "node": "Remotive: Project Manager", "type": "main", "index": 0 },
         { "node": "Remotive: Product Manager", "type": "main", "index": 0 },
         { "node": "Remotive: Scrum Master",   "type": "main", "index": 0 },
@@ -279,6 +293,7 @@
         { "node": "RemoteOK Board",           "type": "main", "index": 0 }
       ]]
     },
+    "User CV (edit me)": { "main": [[]] },
     "Remotive: Project Manager": { "main": [[{ "node": "Merge All Sources", "type": "main", "index": 0 }]] },
     "Remotive: Product Manager": { "main": [[{ "node": "Merge All Sources", "type": "main", "index": 1 }]] },
     "Remotive: Scrum Master":    { "main": [[{ "node": "Merge All Sources", "type": "main", "index": 2 }]] },
