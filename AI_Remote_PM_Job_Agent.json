@@ -1,0 +1,307 @@
+{
+  "name": "AI Remote PM Job Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "0 9 * * *" }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Daily Cron 9AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [100, 400]
+    },
+
+    {
+      "parameters": {
+        "url": "https://remotive.com/api/remote-jobs?search=project+manager",
+        "options": { "timeout": 15000 }
+      },
+      "id": "src-remotive-pjm",
+      "name": "Remotive: Project Manager",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [320, 200]
+    },
+    {
+      "parameters": {
+        "url": "https://remotive.com/api/remote-jobs?search=product+manager",
+        "options": { "timeout": 15000 }
+      },
+      "id": "src-remotive-prm",
+      "name": "Remotive: Product Manager",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [320, 340]
+    },
+    {
+      "parameters": {
+        "url": "https://remotive.com/api/remote-jobs?search=scrum+master",
+        "options": { "timeout": 15000 }
+      },
+      "id": "src-remotive-scrum",
+      "name": "Remotive: Scrum Master",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [320, 480]
+    },
+    {
+      "parameters": {
+        "url": "https://www.arbeitnow.com/api/job-board-api",
+        "options": { "timeout": 15000 }
+      },
+      "id": "src-arbeitnow",
+      "name": "Arbeitnow Board",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [320, 620]
+    },
+    {
+      "parameters": {
+        "url": "https://remoteok.com/api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "User-Agent", "value": "n8n-pm-job-agent/1.0" }
+          ]
+        },
+        "options": { "timeout": 15000 }
+      },
+      "id": "src-remoteok",
+      "name": "RemoteOK Board",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [320, 760]
+    },
+
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "mergeByPosition",
+        "options": {}
+      },
+      "id": "merge-sources",
+      "name": "Merge All Sources",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [560, 480]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// === NORMALIZE ALL SOURCES INTO A UNIFIED SCHEMA ===\n// Each upstream HTTP node returns a single item whose .json may contain:\n//   - Remotive:  { jobs: [...] }\n//   - Arbeitnow: { data: [...] }\n//   - RemoteOK:  [legal, ...jobs]  (array, first item is legal notice)\n\nconst out = [];\n\nfor (const item of items) {\n  const payload = item.json;\n\n  // Remotive\n  if (payload && Array.isArray(payload.jobs)) {\n    for (const j of payload.jobs) {\n      out.push({\n        id: `remotive-${j.id}`,\n        source: 'Remotive',\n        title: j.title || '',\n        company: j.company_name || '',\n        location: j.candidate_required_location || 'Remote',\n        url: j.url || '',\n        description: (j.description || '').replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 1200),\n        tags: j.tags || [],\n        publication_date: j.publication_date || null,\n        job_type: j.job_type || ''\n      });\n    }\n    continue;\n  }\n\n  // Arbeitnow\n  if (payload && Array.isArray(payload.data)) {\n    for (const j of payload.data) {\n      out.push({\n        id: `arbeitnow-${j.slug || j.url}`,\n        source: 'Arbeitnow',\n        title: j.title || '',\n        company: j.company_name || '',\n        location: (j.location || (j.remote ? 'Remote' : '')) || '',\n        url: j.url || '',\n        description: (j.description || '').replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 1200),\n        tags: j.tags || [],\n        publication_date: j.created_at ? new Date(j.created_at * 1000).toISOString() : null,\n        job_type: (j.job_types || []).join(',')\n      });\n    }\n    continue;\n  }\n\n  // RemoteOK (root array)\n  if (Array.isArray(payload)) {\n    for (const j of payload) {\n      if (!j || !j.position) continue; // skip legal notice\n      out.push({\n        id: `remoteok-${j.id}`,\n        source: 'RemoteOK',\n        title: j.position || '',\n        company: j.company || '',\n        location: j.location || 'Remote',\n        url: j.url || j.apply_url || '',\n        description: (j.description || '').replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 1200),\n        tags: j.tags || [],\n        publication_date: j.date || null,\n        job_type: ''\n      });\n    }\n    continue;\n  }\n}\n\nreturn out.map(j => ({ json: j }));\n"
+      },
+      "id": "normalize",
+      "name": "Normalize Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [780, 480]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// === PRE-FILTER: keep only remote PM/Product/Scrum-ish roles ===\nconst titleRe = /(project\\s*manager|product\\s*manager|program\\s*manager|scrum\\s*master|associate\\s*pm|junior\\s*pm|apm|product\\s*owner)/i;\nconst seniorRe = /(senior|sr\\.|staff|principal|lead|director|head\\s+of|vp|chief|manager\\s+of\\s+managers)/i;\nconst remoteRe = /(remote|worldwide|anywhere|distributed)/i;\n\nconst kept = [];\nfor (const item of items) {\n  const j = item.json;\n  const title = (j.title || '').toString();\n  const loc = (j.location || '').toString();\n  if (!titleRe.test(title)) continue;\n  if (seniorRe.test(title)) continue;\n  if (!remoteRe.test(loc) && !remoteRe.test(title)) continue;\n  kept.push({ json: j });\n}\nreturn kept;\n"
+      },
+      "id": "prefilter",
+      "name": "Pre-Filter (Remote + PM)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 480]
+    },
+
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": { "__rl": true, "value": "YOUR_GOOGLE_SHEET_ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "Jobs", "mode": "name" },
+        "options": {}
+      },
+      "id": "db-read",
+      "name": "Load Existing Jobs (Sheets)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1220, 320],
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "YOUR_GOOGLE_CREDENTIAL_ID", "name": "Google Sheets Account" }
+      }
+    },
+
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "multiplex",
+        "options": {}
+      },
+      "id": "merge-dedupe",
+      "name": "Merge: New + Existing",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1440, 480]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// === DEDUPE against existing DB rows ===\n// Input branch 1 = normalized new jobs (each item.json has .id, .url, .title, .company)\n// Input branch 2 = existing rows from Sheets/Notion (each item.json has at least Link or ID column)\n//\n// We split items by presence of a typical normalized field.\nconst existing = new Set();\nconst incoming = [];\n\nfor (const item of items) {\n  const j = item.json || {};\n  // Heuristic: existing rows usually have 'Link' or 'ID' columns; new ones have 'url' + 'source'\n  if (j.source && j.url) {\n    incoming.push(j);\n  } else {\n    const key = (j.ID || j.Link || j.url || '').toString();\n    if (key) existing.add(key);\n  }\n}\n\nconst fresh = incoming.filter(j => !existing.has(j.id) && !existing.has(j.url));\nreturn fresh.map(j => ({ json: j }));\n"
+      },
+      "id": "dedupe",
+      "name": "Deduplicate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1660, 480]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// === BATCH all fresh jobs into ONE item for the AI agent ===\nconst payload = items.map(i => ({\n  id: i.json.id,\n  source: i.json.source,\n  title: i.json.title,\n  company: i.json.company,\n  location: i.json.location,\n  url: i.json.url,\n  summary_raw: i.json.description?.slice(0, 600) || ''\n}));\nreturn [{ json: { jobs: payload, count: payload.length } }];\n"
+      },
+      "id": "batch",
+      "name": "Batch for AI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1880, 480]
+    },
+
+    {
+      "parameters": {
+        "resource": "chat",
+        "model": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are an expert AI Job Hunter assistant.\n\nGOAL: Find the best REMOTE Project Management jobs for a candidate with 0–3 years experience.\n\nSTRICT FILTER:\n- Include only REMOTE jobs.\n- Roles allowed: Project Manager, Associate PM, Junior PM, Product Manager, Scrum Master.\n- Exclude: Senior / Director / 5+ years roles, non-remote roles.\n\nFOR EACH JOB, ENRICH:\n- Clean job title\n- Company name\n- Location\n- 1–2 line simple summary\n- Experience level (guess if missing)\n- Direct apply link\n\nSCORE 1–10 based on: entry-level friendliness, clarity of role, remote flexibility.\n\nOUTPUT RULES:\n- Return ONLY a valid JSON array (no prose, no markdown fences).\n- Max 10 items, no duplicates.\n- Schema per item: {\"title\":\"\",\"company\":\"\",\"location\":\"\",\"summary\":\"\",\"experience\":\"\",\"score\":0,\"link\":\"\",\"source\":\"\"}"
+            },
+            {
+              "role": "user",
+              "content": "=Here is the JSON list of candidate jobs. Pick the top 10 matches and return the JSON array only.\n\n{{ JSON.stringify($json.jobs) }}"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "options": { "temperature": 0.2 }
+      },
+      "id": "ai-agent",
+      "name": "AI Filter + Score",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.6,
+      "position": [2100, 480],
+      "credentials": {
+        "openAiApi": { "id": "YOUR_OPENAI_CREDENTIAL_ID", "name": "OpenAI Account" }
+      }
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// === PARSE AI OUTPUT into individual rows for the DB ===\nconst raw = items[0]?.json;\nlet arr = [];\n\n// OpenAI node may return content as string or already-parsed object\nconst content = raw?.message?.content ?? raw?.choices?.[0]?.message?.content ?? raw?.content ?? raw;\ntry {\n  arr = typeof content === 'string' ? JSON.parse(content) : (Array.isArray(content) ? content : (content?.jobs || []));\n} catch (e) {\n  // Try to extract a JSON array substring\n  const m = String(content).match(/\\[[\\s\\S]*\\]/);\n  if (m) arr = JSON.parse(m[0]);\n}\n\nconst today = new Date().toISOString().slice(0, 10);\nreturn (arr || []).slice(0, 10).map(j => ({\n  json: {\n    Date: today,\n    Title: j.title || '',\n    Company: j.company || '',\n    Location: j.location || '',\n    Score: j.score ?? '',\n    Link: j.link || j.url || '',\n    Status: 'New',\n    Source: j.source || 'API',\n    Summary: j.summary || '',\n    Experience: j.experience || ''\n  }\n}));\n"
+      },
+      "id": "parse-ai",
+      "name": "Parse AI -> Rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2320, 480]
+    },
+
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "value": "YOUR_GOOGLE_SHEET_ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "Jobs", "mode": "name" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date":       "={{ $json.Date }}",
+            "Title":      "={{ $json.Title }}",
+            "Company":    "={{ $json.Company }}",
+            "Location":   "={{ $json.Location }}",
+            "Score":      "={{ $json.Score }}",
+            "Link":       "={{ $json.Link }}",
+            "Status":     "={{ $json.Status }}",
+            "Source":     "={{ $json.Source }}",
+            "Summary":    "={{ $json.Summary }}",
+            "Experience": "={{ $json.Experience }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "db-write",
+      "name": "Save to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2540, 480],
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "YOUR_GOOGLE_CREDENTIAL_ID", "name": "Google Sheets Account" }
+      }
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// === BUILD a single email digest item from all rows ===\nconst rows = items.map(i => i.json);\nconst lines = rows.map((r, idx) => {\n  return `${idx + 1}. ${r.Title} — ${r.Company}\\n   📍 ${r.Location}  ⭐ ${r.Score}/10  (${r.Source})\\n   🧾 ${r.Summary}\\n   🔗 ${r.Link}`;\n}).join('\\n\\n');\n\nconst html = `\n<h2>🚀 Daily Remote PM Jobs (Top Matches)</h2>\n<p>Here are your best opportunities today:</p>\n<ol>\n${rows.map(r => `<li><b>${r.Title}</b> — ${r.Company}<br>📍 ${r.Location} &nbsp; ⭐ ${r.Score}/10 &nbsp; <i>${r.Source}</i><br>${r.Summary}<br><a href=\"${r.Link}\">Apply →</a></li>`).join('')}\n</ol>\n<h3>🔥 Action Plan</h3>\n<ul><li>Apply to top 3 jobs</li><li>Track status in dashboard</li></ul>\n<p><i>Stay consistent.</i></p>\n`;\n\nreturn [{ json: { count: rows.length, text: lines, html } }];\n"
+      },
+      "id": "digest",
+      "name": "Build Email Digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2760, 480]
+    },
+
+    {
+      "parameters": {
+        "fromEmail": "your@email.com",
+        "toEmail": "your@email.com",
+        "subject": "🚀 Daily Remote PM Jobs (Top Matches)",
+        "emailFormat": "html",
+        "html": "={{ $json.html }}",
+        "text": "={{ $json.text }}",
+        "options": {}
+      },
+      "id": "email",
+      "name": "Send Email Digest",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2980, 480],
+      "credentials": {
+        "smtp": { "id": "YOUR_SMTP_ID", "name": "SMTP Account" }
+      }
+    }
+  ],
+
+  "connections": {
+    "Daily Cron 9AM": {
+      "main": [[
+        { "node": "Remotive: Project Manager", "type": "main", "index": 0 },
+        { "node": "Remotive: Product Manager", "type": "main", "index": 0 },
+        { "node": "Remotive: Scrum Master",   "type": "main", "index": 0 },
+        { "node": "Arbeitnow Board",          "type": "main", "index": 0 },
+        { "node": "RemoteOK Board",           "type": "main", "index": 0 }
+      ]]
+    },
+    "Remotive: Project Manager": { "main": [[{ "node": "Merge All Sources", "type": "main", "index": 0 }]] },
+    "Remotive: Product Manager": { "main": [[{ "node": "Merge All Sources", "type": "main", "index": 1 }]] },
+    "Remotive: Scrum Master":    { "main": [[{ "node": "Merge All Sources", "type": "main", "index": 2 }]] },
+    "Arbeitnow Board":           { "main": [[{ "node": "Merge All Sources", "type": "main", "index": 3 }]] },
+    "RemoteOK Board":            { "main": [[{ "node": "Merge All Sources", "type": "main", "index": 4 }]] },
+
+    "Merge All Sources":         { "main": [[{ "node": "Normalize Data", "type": "main", "index": 0 }]] },
+    "Normalize Data":            { "main": [[{ "node": "Pre-Filter (Remote + PM)", "type": "main", "index": 0 }]] },
+
+    "Pre-Filter (Remote + PM)":   { "main": [[{ "node": "Merge: New + Existing", "type": "main", "index": 0 }]] },
+    "Load Existing Jobs (Sheets)":{ "main": [[{ "node": "Merge: New + Existing", "type": "main", "index": 1 }]] },
+
+    "Merge: New + Existing":     { "main": [[{ "node": "Deduplicate", "type": "main", "index": 0 }]] },
+    "Deduplicate":               { "main": [[{ "node": "Batch for AI", "type": "main", "index": 0 }]] },
+    "Batch for AI":              { "main": [[{ "node": "AI Filter + Score", "type": "main", "index": 0 }]] },
+    "AI Filter + Score":         { "main": [[{ "node": "Parse AI -> Rows", "type": "main", "index": 0 }]] },
+    "Parse AI -> Rows":          { "main": [[{ "node": "Save to Google Sheets", "type": "main", "index": 0 }]] },
+    "Save to Google Sheets":     { "main": [[{ "node": "Build Email Digest", "type": "main", "index": 0 }]] },
+    "Build Email Digest":        { "main": [[{ "node": "Send Email Digest", "type": "main", "index": 0 }]] }
+  },
+
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "staticData": null,
+  "meta": { "instanceId": "ai-remote-pm-job-agent" }
+}
