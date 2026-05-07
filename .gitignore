@@ -12,3 +12,9 @@ credentials.json
 
 # n8n local data
 .n8n/
+
+# Dashboard
+node_modules/
+backend/data/
+frontend/dist/
+frontend/.vite/

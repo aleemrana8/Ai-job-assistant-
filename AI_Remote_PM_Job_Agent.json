@@ -1,5 +1,5 @@
 {
-  "name": "AI Remote PM Job Agent",
+  "name": "AI Remote PM Job Agent v2",
   "nodes": [
     {
       "parameters": {
@@ -18,162 +18,76 @@
 
     {
       "parameters": {
-        "jsCode": "// === USER PROFILE / CV ===\n// Edit USER_CV below with your real CV text. The AI agent uses it to\n// match skills, score relevance, and identify gaps. Keep it concise (<2000 chars).\nconst USER_CV = `\nName: Your Name\nTarget Roles: Project Manager, Product Manager, Scrum Master, AI Project Manager, Program Manager\nExperience: 0-3 years (entry to mid level)\nSkills: Agile, Scrum, Jira, Confluence, Trello, Asana, Notion, stakeholder communication, sprint planning, roadmaps, requirements gathering, basic SQL, Google Workspace, MS Office, AI tools (ChatGPT, n8n, Zapier).\nDomains: SaaS, AI, automation, fintech (open).\nCertifications (optional): CSM in progress, Google PM Certificate.\nLocation: Remote / Worldwide.\n`.trim();\n\nreturn [{ json: { user_cv: USER_CV } }];\n"
+        "httpMethod": "POST",
+        "path": "jobs-ingest",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook: Receive Jobs",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [100, 200],
+      "webhookId": "jobs-ingest-hook"
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// === USER PROFILE / CV ===\n// Edit USER_CV below with your real CV text. The AI agent uses it to\n// match skills, score relevance, and identify gaps. Keep it concise (<2000 chars).\nconst USER_CV = `\nName: Your Name\nTarget Roles: Project Manager, Product Manager, Scrum Master, AI Project Manager, Program Manager, Technical Program Manager, Agile Project Manager\nExperience: 0-3 years (entry to mid level)\nSkills: Agile, Scrum, Jira, Confluence, Trello, Asana, Notion, stakeholder communication, sprint planning, roadmaps, requirements gathering, coordination, scheduling, delivery management, product thinking, basic SQL, Google Workspace, MS Office, AI tools (ChatGPT, n8n, Zapier).\nDomains: SaaS, AI, automation, fintech (open).\nCertifications (optional): CSM in progress, Google PM Certificate.\nPreferences: Remote only, entry-to-mid level, no senior/executive roles.\nLocation: Remote / Worldwide.\n`.trim();\n\nreturn [{ json: { user_profile: USER_CV } }];\n"
       },
       "id": "user-cv",
-      "name": "User CV (edit me)",
+      "name": "User Profile (edit me)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [100, 600]
+      "position": [340, 400]
     },
 
     {
       "parameters": {
-        "url": "https://remotive.com/api/remote-jobs?search=project+manager",
-        "options": { "timeout": 15000 }
+        "jsCode": "// === COLLECT RAW JOBS ===\n// Handles both Webhook input and Schedule-trigger input.\n// Webhook body can be: { jobs: [...] } or a plain array\n// Schedule trigger: calls local backend for queued/raw jobs\n\nconst payload = items[0]?.json || {};\nlet rawJobs = [];\n\nif (Array.isArray(payload)) {\n  rawJobs = payload;\n} else if (Array.isArray(payload.jobs)) {\n  rawJobs = payload.jobs;\n} else if (Array.isArray(payload.body?.jobs)) {\n  rawJobs = payload.body.jobs;\n} else if (Array.isArray(payload.body)) {\n  rawJobs = payload.body;\n}\n\n// Keep only LinkedIn / Indeed sourced jobs (hard rule)\nconst allowed = ['linkedin', 'indeed'];\nconst filtered = rawJobs.filter(j => {\n  const src = (j.source || '').toLowerCase();\n  return allowed.some(a => src.includes(a));\n});\n\nreturn filtered.map(j => ({ json: j }));\n"
       },
-      "id": "src-remotive-pjm",
-      "name": "Remotive: Project Manager",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [320, 200]
-    },
-    {
-      "parameters": {
-        "url": "https://remotive.com/api/remote-jobs?search=product+manager",
-        "options": { "timeout": 15000 }
-      },
-      "id": "src-remotive-prm",
-      "name": "Remotive: Product Manager",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [320, 340]
-    },
-    {
-      "parameters": {
-        "url": "https://remotive.com/api/remote-jobs?search=scrum+master",
-        "options": { "timeout": 15000 }
-      },
-      "id": "src-remotive-scrum",
-      "name": "Remotive: Scrum Master",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [320, 480]
-    },
-    {
-      "parameters": {
-        "url": "https://www.arbeitnow.com/api/job-board-api",
-        "options": { "timeout": 15000 }
-      },
-      "id": "src-arbeitnow",
-      "name": "Arbeitnow Board",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [320, 620]
-    },
-    {
-      "parameters": {
-        "url": "https://remoteok.com/api",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "User-Agent", "value": "n8n-pm-job-agent/1.0" }
-          ]
-        },
-        "options": { "timeout": 15000 }
-      },
-      "id": "src-remoteok",
-      "name": "RemoteOK Board",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [320, 760]
-    },
-
-    {
-      "parameters": {
-        "mode": "combine",
-        "combinationMode": "mergeByPosition",
-        "options": {}
-      },
-      "id": "merge-sources",
-      "name": "Merge All Sources",
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 3,
-      "position": [560, 480]
-    },
-
-    {
-      "parameters": {
-        "jsCode": "// === NORMALIZE ALL SOURCES INTO A UNIFIED SCHEMA ===\n// Each upstream HTTP node returns a single item whose .json may contain:\n//   - Remotive:  { jobs: [...] }\n//   - Arbeitnow: { data: [...] }\n//   - RemoteOK:  [legal, ...jobs]  (array, first item is legal notice)\n\nconst out = [];\n\nfor (const item of items) {\n  const payload = item.json;\n\n  // Remotive\n  if (payload && Array.isArray(payload.jobs)) {\n    for (const j of payload.jobs) {\n      out.push({\n        id: `remotive-${j.id}`,\n        source: 'Remotive',\n        title: j.title || '',\n        company: j.company_name || '',\n        location: j.candidate_required_location || 'Remote',\n        url: j.url || '',\n        description: (j.description || '').replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 1200),\n        tags: j.tags || [],\n        publication_date: j.publication_date || null,\n        job_type: j.job_type || ''\n      });\n    }\n    continue;\n  }\n\n  // Arbeitnow\n  if (payload && Array.isArray(payload.data)) {\n    for (const j of payload.data) {\n      out.push({\n        id: `arbeitnow-${j.slug || j.url}`,\n        source: 'Arbeitnow',\n        title: j.title || '',\n        company: j.company_name || '',\n        location: (j.location || (j.remote ? 'Remote' : '')) || '',\n        url: j.url || '',\n        description: (j.description || '').replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 1200),\n        tags: j.tags || [],\n        publication_date: j.created_at ? new Date(j.created_at * 1000).toISOString() : null,\n        job_type: (j.job_types || []).join(',')\n      });\n    }\n    continue;\n  }\n\n  // RemoteOK (root array)\n  if (Array.isArray(payload)) {\n    for (const j of payload) {\n      if (!j || !j.position) continue; // skip legal notice\n      out.push({\n        id: `remoteok-${j.id}`,\n        source: 'RemoteOK',\n        title: j.position || '',\n        company: j.company || '',\n        location: j.location || 'Remote',\n        url: j.url || j.apply_url || '',\n        description: (j.description || '').replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 1200),\n        tags: j.tags || [],\n        publication_date: j.date || null,\n        job_type: ''\n      });\n    }\n    continue;\n  }\n}\n\nreturn out.map(j => ({ json: j }));\n"
-      },
-      "id": "normalize",
-      "name": "Normalize Data",
+      "id": "collect-raw",
+      "name": "Collect & Source-Filter",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [780, 480]
+      "position": [560, 300]
     },
 
     {
       "parameters": {
-        "jsCode": "// === PRE-FILTER: keep only remote PM/Product/Scrum-ish roles ===\nconst titleRe = /(project\\s*manager|product\\s*manager|program\\s*manager|scrum\\s*master|associate\\s*pm|junior\\s*pm|apm|product\\s*owner)/i;\nconst seniorRe = /(senior|sr\\.|staff|principal|lead|director|head\\s+of|vp|chief|manager\\s+of\\s+managers)/i;\nconst remoteRe = /(remote|worldwide|anywhere|distributed)/i;\n\nconst kept = [];\nfor (const item of items) {\n  const j = item.json;\n  const title = (j.title || '').toString();\n  const loc = (j.location || '').toString();\n  if (!titleRe.test(title)) continue;\n  if (seniorRe.test(title)) continue;\n  if (!remoteRe.test(loc) && !remoteRe.test(title)) continue;\n  kept.push({ json: j });\n}\nreturn kept;\n"
+        "jsCode": "// === PRE-FILTER: keep only remote PM/Product/Scrum/Management roles ===\nconst titleRe = /(project\\s*manager|product\\s*manager|program\\s*manager|technical\\s*program\\s*manager|scrum\\s*master|agile\\s*(project\\s*)?manager|associate\\s*pm|junior\\s*pm|apm|product\\s*owner|ai\\s*project\\s*manager|delivery\\s*manager|operations\\s*manager|management|coordinator|team\\s*lead)/i;\nconst seniorRe = /(senior|sr\\.|staff|principal|director|head\\s+of|vp|chief|manager\\s+of\\s+managers)/i;\nconst remoteRe = /(remote|worldwide|anywhere|distributed|work.from.home|wfh)/i;\n\nconst kept = [];\nfor (const item of items) {\n  const j = item.json;\n  const title = (j.title || '').toString();\n  const loc = (j.location || '').toString();\n  const remoteFlag = (j.remote_flag || '').toString();\n  if (!titleRe.test(title)) continue;\n  if (seniorRe.test(title)) continue;\n  if (!remoteRe.test(loc) && !remoteRe.test(title) && !remoteRe.test(remoteFlag)) continue;\n  // Must have an apply_link\n  if (!j.apply_link && !j.source_url) continue;\n  kept.push({ json: j });\n}\nreturn kept.length ? kept : [{ json: { _empty: true } }];\n"
       },
       "id": "prefilter",
-      "name": "Pre-Filter (Remote + PM)",
+      "name": "Pre-Filter (Remote + PM + Link)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1000, 480]
+      "position": [780, 300]
     },
 
     {
       "parameters": {
-        "operation": "read",
-        "documentId": { "__rl": true, "value": "YOUR_GOOGLE_SHEET_ID", "mode": "id" },
-        "sheetName": { "__rl": true, "value": "Jobs", "mode": "name" },
-        "options": {}
-      },
-      "id": "db-read",
-      "name": "Load Existing Jobs (Sheets)",
-      "type": "n8n-nodes-base.googleSheets",
-      "typeVersion": 4.5,
-      "position": [1220, 320],
-      "credentials": {
-        "googleSheetsOAuth2Api": { "id": "YOUR_GOOGLE_CREDENTIAL_ID", "name": "Google Sheets Account" }
-      }
-    },
-
-    {
-      "parameters": {
-        "mode": "combine",
-        "combinationMode": "multiplex",
-        "options": {}
-      },
-      "id": "merge-dedupe",
-      "name": "Merge: New + Existing",
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 3,
-      "position": [1440, 480]
-    },
-
-    {
-      "parameters": {
-        "jsCode": "// === DEDUPE against existing DB rows ===\n// Input branch 1 = normalized new jobs (each item.json has .id, .url, .title, .company)\n// Input branch 2 = existing rows from Sheets/Notion (each item.json has at least Link or ID column)\n//\n// We split items by presence of a typical normalized field.\nconst existing = new Set();\nconst incoming = [];\n\nfor (const item of items) {\n  const j = item.json || {};\n  // Heuristic: existing rows usually have 'Link' or 'ID' columns; new ones have 'url' + 'source'\n  if (j.source && j.url) {\n    incoming.push(j);\n  } else {\n    const key = (j.ID || j.Link || j.url || '').toString();\n    if (key) existing.add(key);\n  }\n}\n\nconst fresh = incoming.filter(j => !existing.has(j.id) && !existing.has(j.url));\nreturn fresh.map(j => ({ json: j }));\n"
-      },
-      "id": "dedupe",
-      "name": "Deduplicate",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1660, 480]
-    },
-
-    {
-      "parameters": {
-        "jsCode": "// === BATCH all fresh jobs + attach USER_CV into ONE item for the AI agent ===\nlet userCv = '';\ntry { userCv = $items('User CV (edit me)')[0].json.user_cv || ''; } catch (e) { userCv = ''; }\n\nconst payload = items.map(i => ({\n  id: i.json.id,\n  source: i.json.source,\n  title: i.json.title,\n  company: i.json.company,\n  location: i.json.location,\n  url: i.json.url,\n  description: (i.json.description || '').slice(0, 800)\n}));\n\nreturn [{ json: { user_cv: userCv, jobs: payload, count: payload.length } }];\n"
+        "jsCode": "// === BATCH: combine user profile + filtered jobs into ONE item for AI ===\nlet userProfile = '';\ntry { userProfile = $items('User Profile (edit me)')[0].json.user_profile || ''; } catch(e) {}\n\nconst jobs = items.filter(i => !i.json._empty).map(i => {\n  const j = i.json;\n  return {\n    title: j.title || '',\n    company: j.company || '',\n    location: j.location || '',\n    description: (j.description || '').slice(0, 1000),\n    source: j.source || '',\n    source_url: j.source_url || '',\n    apply_link: j.apply_link || '',\n    posted_at: j.posted_at || '',\n    seniority: j.seniority || '',\n    tags: j.tags || [],\n    salary: j.salary || '',\n    remote_flag: j.remote_flag || ''\n  };\n});\n\nif (jobs.length === 0) {\n  return [{ json: { _no_jobs: true } }];\n}\n\nreturn [{ json: { user_profile: userProfile, raw_jobs: jobs, raw_count: jobs.length } }];\n"
       },
       "id": "batch",
       "name": "Batch for AI",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1880, 480]
+      "position": [1000, 300]
+    },
+
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            { "value1": "={{ $json._no_jobs }}", "value2": true }
+          ]
+        }
+      },
+      "id": "if-empty",
+      "name": "Has Jobs?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1220, 300]
     },
 
     {
@@ -184,11 +98,11 @@
           "values": [
             {
               "role": "system",
-              "content": "You are a fully autonomous AI Job Agent acting as job search engine, recruiter, career coach, data filter, and decision maker.\n\nMISSION: From the provided JOB_LIST and USER_CV, return only the BEST remote opportunities for the user.\n\nTARGET ROLES (only):\n- Project Manager, Product Manager, AI Project Manager, Scrum Master, Program Manager, Associate/Junior PM, APM, Product Owner.\n\nHARD FILTERS — discard a job if ANY apply:\n- Not remote / not remote-friendly.\n- Role unrelated to target roles (developer, designer, sales, support, etc.).\n- Clearly senior (Senior, Sr., Staff, Principal, Lead, Director, Head of, VP, Chief, 5+ years required).\n\nFOR EACH SURVIVING JOB:\n1. Understand the role from title + description.\n2. Compare with USER_CV: skills match, experience level, domain relevance.\n3. Identify strengths and skill gaps.\n\nSCORING (1–10):\n- CV relevance (most important)\n- Entry-level friendliness\n- Clarity of role\n- Remote flexibility\nMeaning: 1–4 poor, 5–7 medium, 8–10 strong.\n\nRANKING:\n- Sort by score desc.\n- Prefer LinkedIn / Indeed sources when present.\n- Prefer recent postings.\n\nDEDUPLICATION:\n- Remove duplicates by same link OR same (title + company).\n\nOUTPUT — STRICT JSON ARRAY ONLY (no prose, no markdown, no code fences). Each item must follow EXACTLY:\n{\n  \"title\": \"\",\n  \"company\": \"\",\n  \"location\": \"\",\n  \"source\": \"\",\n  \"summary\": \"\",\n  \"score\": 0,\n  \"reason\": \"\",\n  \"skills_match\": [],\n  \"skills_missing\": [],\n  \"apply_link\": \"\"\n}\n\nFIELD RULES:\n- summary: max 2 lines, simple human language explaining what the job is.\n- reason: ONE short sentence on WHY this job fits the user.\n- skills_match / skills_missing: short arrays of strings derived from the CV.\n- apply_link: copy the original job link verbatim — never modify or invent URLs.\n\nLIMITS:\n- Return ONLY top 5–10 jobs.\n- If no good fits exist, return [].\n- DO NOT hallucinate jobs, companies, links, or skills.\n- DO NOT include irrelevant roles even to fill the list."
+              "content": "You are a production AI Job Agent.\n\nGOAL:\nFind and manage remote jobs related to:\n- Project Manager\n- Product Manager\n- AI Project Manager\n- Program Manager\n- Scrum Master\n- closely related roles only\n\nSOURCE RULE:\nOnly keep jobs if the source metadata says LinkedIn or Indeed.\nIf source is missing, unknown, or anything else, discard the job.\n\nVALIDITY RULE:\nOnly keep jobs that:\n- are remote\n- have a valid apply link\n- were posted within the last 7 days\n- are relevant to the target roles\n\nIf any of those conditions fail, discard the job.\n\nDUPLICATE RULE:\nTreat jobs as duplicates if:\n- same apply_link\nOR\n- same title + company + source\nKeep only one.\n\nRANKING RULE:\nScore every kept job from 1 to 10 based on:\n- role relevance\n- CV match\n- remote fit\n- clarity of description\n- likely usefulness to the user\n\nDO NOT LIMIT DASHBOARD RESULTS:\nThe dashboard must contain all valid jobs from the last 7 days.\nDo not return only the top few.\nDo not truncate valid results.\n\nEMAIL RULE:\nThe email should include only the best jobs:\n- top 10 by score\n- then newest first if scores tie\n- include title, company, source, location, score, posted_at, apply_link, and a short summary\n\nOUTPUT RULE:\nReturn strict JSON only.\nNo markdown.\nNo commentary.\nNo invented data.\nNo fake links.\nNo hallucinated companies or titles.\n\nOUTPUT STRUCTURE:\n{\n  \"run_timestamp\": \"\",\n  \"summary\": {\n    \"total_input_jobs\": 0,\n    \"total_valid_jobs\": 0,\n    \"total_discarded_jobs\": 0,\n    \"discard_reasons\": {\n      \"not_remote\": 0,\n      \"wrong_source\": 0,\n      \"missing_link\": 0,\n      \"older_than_7_days\": 0,\n      \"irrelevant_role\": 0,\n      \"duplicate\": 0\n    }\n  },\n  \"dashboard_jobs\": [\n    {\n      \"job_id\": \"\",\n      \"title\": \"\",\n      \"company\": \"\",\n      \"source\": \"\",\n      \"location\": \"\",\n      \"posted_at\": \"\",\n      \"score\": 0,\n      \"summary\": \"\",\n      \"reason\": \"\",\n      \"skills_match\": [],\n      \"skills_missing\": [],\n      \"apply_link\": \"\",\n      \"status\": \"New\"\n    }\n  ],\n  \"email_jobs\": [\n    {\n      \"title\": \"\",\n      \"company\": \"\",\n      \"source\": \"\",\n      \"location\": \"\",\n      \"posted_at\": \"\",\n      \"score\": 0,\n      \"summary\": \"\",\n      \"apply_link\": \"\"\n    }\n  ],\n  \"email\": {\n    \"subject\": \"Daily Remote PM and Product Jobs\",\n    \"intro\": \"\",\n    \"body\": \"\",\n    \"closing\": \"\"\n  }\n}\n\nSORTING RULE:\n- dashboard_jobs: score descending, then posted_at descending\n- email_jobs: score descending, then posted_at descending\n\nSKILLS MATCH RULE:\nCompare the job description with the user profile and extract:\n- skills_match\n- skills_missing\n\nIMPORTANT:\n- Never create jobs that are not in RAW_JOBS\n- Never change apply links\n- Never include jobs older than 7 days\n- Never include non-remote jobs\n- Never include jobs from sources other than LinkedIn or Indeed\n- If no jobs match, return empty arrays with summary counts"
             },
             {
               "role": "user",
-              "content": "=USER_CV:\n{{ $json.user_cv }}\n\nJOB_LIST (JSON):\n{{ JSON.stringify($json.jobs) }}\n\nReturn ONLY the JSON array per the schema above."
+              "content": "=USER_CV:\n{{ $json.user_profile }}\n\nJOB_LIST ({{ $json.raw_count }} jobs):\n{{ JSON.stringify($json.raw_jobs) }}\n\nToday's date: {{ new Date().toISOString().slice(0,10) }}\n\nReturn ONLY the JSON object with dashboard_jobs and email_jobs arrays."
             }
           ]
         },
@@ -199,7 +113,7 @@
       "name": "AI Filter + Score",
       "type": "n8n-nodes-base.openAi",
       "typeVersion": 1.6,
-      "position": [2100, 480],
+      "position": [1500, 200],
       "credentials": {
         "openAiApi": { "id": "YOUR_OPENAI_CREDENTIAL_ID", "name": "OpenAI Account" }
       }
@@ -207,13 +121,39 @@
 
     {
       "parameters": {
-        "jsCode": "// === PARSE AI OUTPUT into individual rows for the DB ===\nconst raw = items[0]?.json;\nlet arr = [];\n\nconst content = raw?.message?.content ?? raw?.choices?.[0]?.message?.content ?? raw?.content ?? raw;\ntry {\n  arr = typeof content === 'string' ? JSON.parse(content) : (Array.isArray(content) ? content : (content?.jobs || []));\n} catch (e) {\n  const m = String(content).match(/\\[[\\s\\S]*\\]/);\n  if (m) { try { arr = JSON.parse(m[0]); } catch (_) { arr = []; } }\n}\n\nconst today = new Date().toISOString().slice(0, 10);\nreturn (arr || []).slice(0, 10).map(j => ({\n  json: {\n    Date: today,\n    Title: j.title || '',\n    Company: j.company || '',\n    Location: j.location || '',\n    Score: j.score ?? '',\n    Link: j.apply_link || j.link || j.url || '',\n    Status: 'New',\n    Source: j.source || 'API',\n    Summary: j.summary || '',\n    Reason: j.reason || '',\n    SkillsMatch: Array.isArray(j.skills_match) ? j.skills_match.join(', ') : (j.skills_match || ''),\n    SkillsMissing: Array.isArray(j.skills_missing) ? j.skills_missing.join(', ') : (j.skills_missing || '')\n  }\n}));\n"
+        "jsCode": "// === PARSE AI OUTPUT ===\n// Extracts: dashboard_jobs + email_jobs from AI response.\nconst raw = items[0]?.json;\n\nlet parsed = null;\nconst content = raw?.message?.content ?? raw?.choices?.[0]?.message?.content ?? raw?.content ?? raw;\n\ntry {\n  parsed = typeof content === 'string' ? JSON.parse(content) : content;\n} catch (e) {\n  const m = String(content).match(/\\{[\\s\\S]*\\}/);\n  if (m) { try { parsed = JSON.parse(m[0]); } catch (_) {} }\n}\n\nif (!parsed || !parsed.dashboard_jobs) {\n  // Fallback: check if it's an array\n  let arr = null;\n  try { arr = typeof content === 'string' ? JSON.parse(content) : content; } catch(_) {}\n  if (Array.isArray(arr)) {\n    parsed = { dashboard_jobs: arr, email_jobs: arr.slice(0, 5).map(j => ({ title: j.title, company: j.company, score: j.score, apply_link: j.apply_link })) };\n  } else {\n    parsed = { dashboard_jobs: [], email_jobs: [] };\n  }\n}\n\nreturn [{ json: parsed }];\n"
       },
       "id": "parse-ai",
-      "name": "Parse AI -> Rows",
+      "name": "Parse AI Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2320, 480]
+      "position": [1720, 200]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// === EXTRACT dashboard_jobs into individual items for DB/Sheets ===\nconst parsed = items[0]?.json || {};\nconst rows = parsed.dashboard_jobs || [];\nconst today = new Date().toISOString().slice(0, 10);\n\nif (rows.length === 0) {\n  return [{ json: { _empty: true, Date: today, Title: 'No jobs found', Company: '', Location: '', Score: 0, Link: '', Status: 'New', Source: '', Summary: 'No matching jobs in this batch', Reason: '', SkillsMatch: '', SkillsMissing: '' } }];\n}\n\nreturn rows.map(j => ({\n  json: {\n    Date: today,\n    JobId: j.job_id || '',\n    Title: j.title || '',\n    Company: j.company || '',\n    Location: j.location || '',\n    PostedAt: j.posted_at || '',\n    Score: j.score ?? 0,\n    Link: j.apply_link || '',\n    Status: j.status || 'New',\n    Source: j.source || '',\n    Summary: j.summary || '',\n    Reason: j.reason || '',\n    SkillsMatch: Array.isArray(j.skills_match) ? j.skills_match.join(', ') : (j.skills_match || ''),\n    SkillsMissing: Array.isArray(j.skills_missing) ? j.skills_missing.join(', ') : (j.skills_missing || '')\n  }\n}));\n"
+      },
+      "id": "extract-rows",
+      "name": "Extract Dashboard Rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1940, 200]
+    },
+
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:4000/api/ingest",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"jobs\": $items().map(i => ({ id: i.json.JobId || i.json.Link, date: i.json.Date, title: i.json.Title, company: i.json.Company, location: i.json.Location, score: i.json.Score, link: i.json.Link, status: i.json.Status, source: i.json.Source, summary: i.json.Summary, reason: i.json.Reason, skills_match: i.json.SkillsMatch, skills_missing: i.json.SkillsMissing })) } }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "push-dashboard",
+      "name": "Push to Dashboard API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2160, 100]
     },
 
     {
@@ -228,8 +168,11 @@
             "Title":         "={{ $json.Title }}",
             "Company":       "={{ $json.Company }}",
             "Location":      "={{ $json.Location }}",
+            "RemoteType":    "={{ $json.RemoteType }}",
+            "PostedAt":      "={{ $json.PostedAt }}",
             "Score":         "={{ $json.Score }}",
             "Link":          "={{ $json.Link }}",
+            "SourceUrl":     "={{ $json.SourceUrl }}",
             "Status":        "={{ $json.Status }}",
             "Source":        "={{ $json.Source }}",
             "Summary":       "={{ $json.Summary }}",
@@ -244,7 +187,7 @@
       "name": "Save to Google Sheets",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
-      "position": [2540, 480],
+      "position": [2160, 300],
       "credentials": {
         "googleSheetsOAuth2Api": { "id": "YOUR_GOOGLE_CREDENTIAL_ID", "name": "Google Sheets Account" }
       }
@@ -252,20 +195,20 @@
 
     {
       "parameters": {
-        "jsCode": "// === BUILD a single email digest item from all rows ===\nconst rows = items.map(i => i.json);\nconst top3 = rows.slice(0, 3);\n\nconst text = [\n  'Top Remote Jobs for You 🚀',\n  '',\n  'Here are your best opportunities today:',\n  '',\n  ...top3.map((r, i) => `${i + 1}. ${r.Title} — ${r.Company}\\n   ${r.Link}`),\n  '',\n  'Full ranked list:',\n  ...rows.map((r, i) => `${i + 1}. [${r.Score}/10] ${r.Title} — ${r.Company} (${r.Source})\\n   📍 ${r.Location}\\n   🧾 ${r.Summary}\\n   💡 ${r.Reason}\\n   ✅ Match: ${r.SkillsMatch}\\n   ⚠️  Gaps: ${r.SkillsMissing}\\n   🔗 ${r.Link}`),\n  '',\n  'Action: apply to the top 3 today and update Status in the dashboard.'\n].join('\\n');\n\nconst html = `\n<h2>🚀 Top Remote Jobs for You</h2>\n<p>Here are your best opportunities today.</p>\n<h3>⚡ Apply first</h3>\n<ol>\n${top3.map(r => `<li><b>${r.Title}</b> — ${r.Company}<br><a href=\"${r.Link}\">Apply →</a></li>`).join('')}\n</ol>\n<h3>📊 Full ranked list</h3>\n<ol>\n${rows.map(r => `<li><b>${r.Title}</b> — ${r.Company}<br>📍 ${r.Location} &nbsp; ⭐ ${r.Score}/10 &nbsp; <i>${r.Source}</i><br><b>Summary:</b> ${r.Summary}<br><b>Why it fits:</b> ${r.Reason}<br><b>✅ Match:</b> ${r.SkillsMatch}<br><b>⚠️ Gaps:</b> ${r.SkillsMissing}<br><a href=\"${r.Link}\">Apply →</a></li>`).join('')}\n</ol>\n<p><i>Stay consistent — apply to the top 3 today.</i></p>\n`;\n\nreturn [{ json: { count: rows.length, text, html } }];\n"
+        "jsCode": "// === BUILD EMAIL from AI email_jobs array ===\nconst parsed = $items('Parse AI Response')[0]?.json || {};\nconst emailJobs = parsed.email_jobs || [];\nconst dashboardJobs = parsed.dashboard_jobs || [];\n\nconst subject = 'Daily Remote PM / Product Jobs';\nconst count = dashboardJobs.length;\n\nconst html = `\n<h2>Daily Remote PM / Product Jobs</h2>\n<p>Found <b>${count}</b> matching jobs today. Here are your top picks:</p>\n<ol>\n${emailJobs.map(r => `<li><b>${r.title}</b> — ${r.company} &nbsp; ⭐ ${r.score}/10<br><a href=\"${r.apply_link}\">Apply →</a></li>`).join('\\n')}\n</ol>\n<p><i>Check your dashboard for all ${count} jobs. Apply to your top picks today!</i></p>\n`;\n\nconst text = [\n  subject,\n  '',\n  `Found ${count} matching jobs today. Top picks:`,\n  '',\n  ...emailJobs.map((r, i) => `${i+1}. [${r.score}/10] ${r.title} — ${r.company}\\n   ${r.apply_link}`),\n  '',\n  `Check your dashboard for all ${count} jobs.`\n].join('\\n');\n\nreturn [{ json: { subject, html, text } }];\n"
       },
       "id": "digest",
       "name": "Build Email Digest",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2760, 480]
+      "position": [2380, 200]
     },
 
     {
       "parameters": {
         "fromEmail": "your@email.com",
         "toEmail": "your@email.com",
-        "subject": "Top Remote Jobs for You 🚀",
+        "subject": "={{ $json.subject }}",
         "emailFormat": "html",
         "html": "={{ $json.html }}",
         "text": "={{ $json.text }}",
@@ -275,48 +218,105 @@
       "name": "Send Email Digest",
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
-      "position": [2980, 480],
+      "position": [2600, 200],
       "credentials": {
         "smtp": { "id": "YOUR_SMTP_ID", "name": "SMTP Account" }
       }
+    },
+
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, message: 'No matching jobs found for this batch.' } }}"
+      },
+      "id": "webhook-empty-response",
+      "name": "Webhook: No Jobs Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1500, 400]
+    },
+
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, kept: $items('Parse AI Response')[0]?.json?.summary?.total_kept_jobs || 0 } }}"
+      },
+      "id": "webhook-success-response",
+      "name": "Webhook: Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2600, 400]
     }
   ],
 
   "connections": {
     "Daily Cron 9AM": {
       "main": [[
-        { "node": "User CV (edit me)",        "type": "main", "index": 0 },
-        { "node": "Remotive: Project Manager", "type": "main", "index": 0 },
-        { "node": "Remotive: Product Manager", "type": "main", "index": 0 },
-        { "node": "Remotive: Scrum Master",   "type": "main", "index": 0 },
-        { "node": "Arbeitnow Board",          "type": "main", "index": 0 },
-        { "node": "RemoteOK Board",           "type": "main", "index": 0 }
+        { "node": "User Profile (edit me)", "type": "main", "index": 0 }
       ]]
     },
-    "User CV (edit me)": { "main": [[]] },
-    "Remotive: Project Manager": { "main": [[{ "node": "Merge All Sources", "type": "main", "index": 0 }]] },
-    "Remotive: Product Manager": { "main": [[{ "node": "Merge All Sources", "type": "main", "index": 1 }]] },
-    "Remotive: Scrum Master":    { "main": [[{ "node": "Merge All Sources", "type": "main", "index": 2 }]] },
-    "Arbeitnow Board":           { "main": [[{ "node": "Merge All Sources", "type": "main", "index": 3 }]] },
-    "RemoteOK Board":            { "main": [[{ "node": "Merge All Sources", "type": "main", "index": 4 }]] },
-
-    "Merge All Sources":         { "main": [[{ "node": "Normalize Data", "type": "main", "index": 0 }]] },
-    "Normalize Data":            { "main": [[{ "node": "Pre-Filter (Remote + PM)", "type": "main", "index": 0 }]] },
-
-    "Pre-Filter (Remote + PM)":   { "main": [[{ "node": "Merge: New + Existing", "type": "main", "index": 0 }]] },
-    "Load Existing Jobs (Sheets)":{ "main": [[{ "node": "Merge: New + Existing", "type": "main", "index": 1 }]] },
-
-    "Merge: New + Existing":     { "main": [[{ "node": "Deduplicate", "type": "main", "index": 0 }]] },
-    "Deduplicate":               { "main": [[{ "node": "Batch for AI", "type": "main", "index": 0 }]] },
-    "Batch for AI":              { "main": [[{ "node": "AI Filter + Score", "type": "main", "index": 0 }]] },
-    "AI Filter + Score":         { "main": [[{ "node": "Parse AI -> Rows", "type": "main", "index": 0 }]] },
-    "Parse AI -> Rows":          { "main": [[{ "node": "Save to Google Sheets", "type": "main", "index": 0 }]] },
-    "Save to Google Sheets":     { "main": [[{ "node": "Build Email Digest", "type": "main", "index": 0 }]] },
-    "Build Email Digest":        { "main": [[{ "node": "Send Email Digest", "type": "main", "index": 0 }]] }
+    "Webhook: Receive Jobs": {
+      "main": [[
+        { "node": "Collect & Source-Filter", "type": "main", "index": 0 }
+      ]]
+    },
+    "User Profile (edit me)": { "main": [[]] },
+    "Collect & Source-Filter": {
+      "main": [[
+        { "node": "Pre-Filter (Remote + PM + Link)", "type": "main", "index": 0 }
+      ]]
+    },
+    "Pre-Filter (Remote + PM + Link)": {
+      "main": [[
+        { "node": "Batch for AI", "type": "main", "index": 0 }
+      ]]
+    },
+    "Batch for AI": {
+      "main": [[
+        { "node": "Has Jobs?", "type": "main", "index": 0 }
+      ]]
+    },
+    "Has Jobs?": {
+      "main": [
+        [{ "node": "Webhook: No Jobs Response", "type": "main", "index": 0 }],
+        [{ "node": "AI Filter + Score", "type": "main", "index": 0 }]
+      ]
+    },
+    "AI Filter + Score": {
+      "main": [[
+        { "node": "Parse AI Response", "type": "main", "index": 0 }
+      ]]
+    },
+    "Parse AI Response": {
+      "main": [[
+        { "node": "Extract Dashboard Rows", "type": "main", "index": 0 }
+      ]]
+    },
+    "Extract Dashboard Rows": {
+      "main": [[
+        { "node": "Push to Dashboard API", "type": "main", "index": 0 },
+        { "node": "Save to Google Sheets", "type": "main", "index": 0 }
+      ]]
+    },
+    "Save to Google Sheets": {
+      "main": [[
+        { "node": "Build Email Digest", "type": "main", "index": 0 }
+      ]]
+    },
+    "Build Email Digest": {
+      "main": [[
+        { "node": "Send Email Digest", "type": "main", "index": 0 }
+      ]]
+    },
+    "Send Email Digest": {
+      "main": [[
+        { "node": "Webhook: Success Response", "type": "main", "index": 0 }
+      ]]
+    }
   },
 
   "settings": { "executionOrder": "v1" },
   "pinData": {},
   "staticData": null,
-  "meta": { "instanceId": "ai-remote-pm-job-agent" }
+  "meta": { "instanceId": "ai-remote-pm-job-agent-v2" }
 }
