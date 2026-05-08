@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
-import { db, listJobs, upsertJobs, updateStatus, deleteJob, stats, saveProfile, loadProfile, logEmail, updateJobCoverLetter, markJobApplied, getApplications } from './db.js';
+import { db, listJobs, upsertJobs, updateStatus, deleteJob, stats, saveProfile, logEmail, updateJobCoverLetter } from './db.js';
 import { fetchAllJobs } from './fetcher.js';
 import { startScheduler } from './scheduler.js';
 import { sendDigest, sendAutoApplyNotification } from './email.js';
@@ -110,7 +110,7 @@ app.post('/api/match-all', (req, res) => {
         .run(result.score, result.reason, result.skills_match.join(', '), result.skills_missing.join(', '), result.auto_apply_eligible ? 1 : 0, job.id);
       matched++;
       if (result.auto_apply_eligible) autoEligible++;
-    } catch (e) {}
+    } catch (_e) { /* skip failed update */ }
   }
 
   res.json({ ok: true, total: allJobs.length, matched, auto_apply_eligible: autoEligible });
@@ -122,7 +122,7 @@ app.get('/api/jobs/:id/cover-letter', (req, res) => {
   if (!job) return res.status(404).json({ error: 'not found' });
   const letter = generateCoverLetter(job);
   // Save to DB
-  try { db.prepare('UPDATE jobs SET cover_letter = ? WHERE id = ?').run(letter, job.id); } catch(e) {}
+  try { db.prepare('UPDATE jobs SET cover_letter = ? WHERE id = ?').run(letter, job.id); } catch(_e) { /* ignore */ }
   res.json({ job_id: job.id, title: job.title, company: job.company, cover_letter: letter });
 });
 
@@ -171,7 +171,7 @@ app.post('/api/jobs/:id/applied', async (req, res) => {
   try {
     db.prepare(`INSERT OR REPLACE INTO applications (id, job_id, status, cover_letter, applied_at) VALUES (?, ?, 'Applied', ?, ?)`)
       .run(`app-${job.id}`, job.id, job.cover_letter || '', now);
-  } catch(e) {}
+  } catch(_e) { /* ignore */ }
   // Send email notification with LLM analysis
   const enrichedJob = { ...job, reason: llmAnalysis?.match_reason || job.reason, skills_match: llmAnalysis ? (llmAnalysis.skills_matched || []).join(', ') : job.skills_match, skills_missing: llmAnalysis ? (llmAnalysis.skills_missing || []).join(', ') : job.skills_missing };
   const emailResult = await sendAutoApplyNotification(enrichedJob, 'success', job.cover_letter || '', llmAnalysis);

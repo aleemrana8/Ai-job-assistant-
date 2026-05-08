@@ -12,6 +12,8 @@
 [![n8n](https://img.shields.io/badge/n8n-Workflow-EA4B71?logo=n8n&logoColor=white)](https://n8n.io)
 [![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4o--mini-412991?logo=openai&logoColor=white)](https://openai.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](https://docker.com)
+[![CI](https://github.com/aleemrana8/Ai-job-assistant-/actions/workflows/ci.yml/badge.svg)](https://github.com/aleemrana8/Ai-job-assistant-/actions/workflows/ci.yml)
+[![CD](https://github.com/aleemrana8/Ai-job-assistant-/actions/workflows/cd.yml/badge.svg)](https://github.com/aleemrana8/Ai-job-assistant-/actions/workflows/cd.yml)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 <br/>
@@ -37,6 +39,7 @@
 - [n8n Workflow](#-n8n-workflow)
 - [Configuration](#-configuration)
 - [Logs & Monitoring](#-logs--monitoring)
+- [CI/CD Pipeline](#-cicd-pipeline)
 - [Roadmap](#-roadmap)
 - [Contributing](#-contributing)
 - [License](#-license)
@@ -476,6 +479,94 @@ docker logs --tail 20 n8n # Last 20 lines
 
 ---
 
+## � CI/CD Pipeline
+
+This project uses **GitHub Actions** for continuous integration and deployment.
+
+### Pipeline Overview
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    CI Pipeline (on push/PR)                      │
+├──────────────┬──────────────────┬────────────────────────────────┤
+│              │                  │                                │
+│  ┌───────────▼──────────┐      │     ┌──────────────────────┐   │
+│  │   Lint & Validate    │      │     │   FastAPI Lint       │   │
+│  │                      │      │     │                      │   │
+│  │ • ESLint Backend     │      │     │ • Ruff linter        │   │
+│  │ • ESLint Frontend    │      │     │ • Python 3.11        │   │
+│  │ • n8n JSON validate  │      │     └──────────────────────┘   │
+│  └───────────┬──────────┘      │                                │
+│              │                 │                                │
+│    ┌─────────┴──────────┐      │                                │
+│    │                    │      │                                │
+│  ┌─▼──────────────┐  ┌──▼─────────────┐                        │
+│  │ Backend Tests  │  │ Frontend Build │                        │
+│  │                │  │                │                        │
+│  │ • Node.js 22   │  │ • Vite build   │                        │
+│  │ • node:test    │  │ • Artifact ↑   │                        │
+│  └─────────┬──────┘  └──────┬─────────┘                        │
+│            │                │                                   │
+│            └────────┬───────┘                                   │
+│                     │                                           │
+│           ┌─────────▼──────────┐                                │
+│           │  Docker Build Test │                                │
+│           │  (FastAPI image)   │                                │
+│           └────────────────────┘                                │
+└──────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────┐
+│                   CD Pipeline (on tag v*)                        │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌────────────────────┐  ┌─────────────────┐  ┌──────────────┐  │
+│  │ Build & Push Image │→ │ Build Frontend  │→ │   Deploy      │  │
+│  │                    │  │                 │  │              │  │
+│  │ • Docker Buildx    │  │ • npm ci        │  │ • Staging or │  │
+│  │ • GHCR push        │  │ • vite build    │  │   Production │  │
+│  │ • Semver tags      │  │ • Artifact ↑    │  │ • Manual gate│  │
+│  └────────────────────┘  └─────────────────┘  └──────────────┘  │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### Workflow Files
+
+| File | Trigger | What It Does |
+|------|---------|-------------|
+| `.github/workflows/ci.yml` | Push to `main`/`develop`, PRs | Lint, test, build, Docker image validation |
+| `.github/workflows/cd.yml` | Tag `v*`, manual dispatch | Build Docker image → push to GHCR → deploy |
+
+### CI Jobs
+
+| Job | Tool | Purpose |
+|-----|------|--------|
+| **Lint & Validate** | ESLint, JSON parse | Catch syntax & code quality issues |
+| **Backend Tests** | `node --test` | Run DB schema + API health tests |
+| **Frontend Build** | Vite | Verify production build succeeds |
+| **FastAPI Lint** | Ruff | Python code quality |
+| **Docker Build** | Docker Buildx | Validate container image builds |
+
+### Running Locally
+
+```bash
+# Backend lint + test
+cd backend
+npm run lint
+npm test
+
+# Frontend lint + build
+cd frontend
+npm run lint
+npm run build
+
+# FastAPI lint
+cd backend-fastapi
+pip install ruff
+ruff check app/
+```
+
+---
+
 ## 🗺 Roadmap
 
 - [x] n8n workflow with AI scoring
@@ -485,6 +576,9 @@ docker logs --tail 20 n8n # Last 20 lines
 - [x] Cover letter generation
 - [x] Email digest
 - [x] Docker support
+- [x] CI/CD pipeline (GitHub Actions)
+- [x] ESLint for backend & frontend
+- [x] Automated tests (Node.js test runner)
 - [ ] RapidAPI JSearch integration (auto-scrape LinkedIn/Indeed)
 - [ ] Chrome extension for one-click apply
 - [ ] Multi-user authentication

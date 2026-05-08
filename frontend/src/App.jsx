@@ -53,12 +53,14 @@ export default function App() {
     }
   }, [filters]);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { load(); }, [load]);
 
   // Auto-refresh every 30 seconds
   useEffect(() => {
     const interval = setInterval(() => { load(); }, 30000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
   }, [load]);
 
   const sources = useMemo(() => {

@@ -37,9 +37,9 @@ db.exec(`
 `);
 
 // Add columns for the career agent (cover letter, application tracking)
-try { db.exec(`ALTER TABLE jobs ADD COLUMN cover_letter TEXT DEFAULT ''`); } catch(e) {}
-try { db.exec(`ALTER TABLE jobs ADD COLUMN applied_at TEXT DEFAULT ''`); } catch(e) {}
-try { db.exec(`ALTER TABLE jobs ADD COLUMN auto_apply_eligible INTEGER DEFAULT 0`); } catch(e) {}
+try { db.exec(`ALTER TABLE jobs ADD COLUMN cover_letter TEXT DEFAULT ''`); } catch(_e) { /* column exists */ }
+try { db.exec(`ALTER TABLE jobs ADD COLUMN applied_at TEXT DEFAULT ''`); } catch(_e) { /* column exists */ }
+try { db.exec(`ALTER TABLE jobs ADD COLUMN auto_apply_eligible INTEGER DEFAULT 0`); } catch(_e) { /* column exists */ }
 
 // Applications tracking table
 db.exec(`
